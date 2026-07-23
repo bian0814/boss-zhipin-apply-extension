@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS Zhipin Apply Helper
 // @namespace    https://codex.local/
-// @version      0.1.2
+// @version      0.1.3
 // @description  Semi-automatic, rate-limited job apply/contact helper for BOSS Zhipin.
 // @author       Codex
 // @match        https://www.zhipin.com/*
@@ -26,6 +26,8 @@
     intervalSeconds: 18,
     dryRun: true,
     autoConfirmDialogs: false,
+    lowInterference: true,
+    keepAwake: true,
     panelPosition: null,
     message:
       '您好，我对这个岗位很感兴趣，经验与岗位方向比较匹配，方便的话想进一步沟通一下，谢谢。'
@@ -40,6 +42,7 @@
     stopped: false,
     count: 0,
     logs: [],
+    wakeLock: null,
     seen: loadSeen(),
     settings: loadSettings()
   };
@@ -169,6 +172,32 @@
     return true;
   }
 
+  async function requestWakeLock() {
+    if (!state.settings.keepAwake || !navigator.wakeLock || state.wakeLock) return;
+
+    try {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+      state.wakeLock.addEventListener('release', () => {
+        state.wakeLock = null;
+      });
+      log('已开启运行期间屏幕常亮。');
+    } catch (error) {
+      log(`无法开启屏幕常亮：${error.message || error}`);
+    }
+  }
+
+  async function releaseWakeLock() {
+    if (!state.wakeLock) return;
+
+    try {
+      await state.wakeLock.release();
+    } catch (error) {
+      // The browser may release the wake lock automatically when the tab is hidden.
+    } finally {
+      state.wakeLock = null;
+    }
+  }
+
   function clickLikeHuman(element) {
     if (!element) return;
     const rect = element.getBoundingClientRect();
@@ -177,7 +206,7 @@
       rect.bottom <= window.innerHeight - 24 &&
       rect.left >= 0 &&
       rect.right <= window.innerWidth;
-    if (!inViewport) {
+    if (!inViewport && !state.settings.lowInterference) {
       element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     }
     ['mouseover', 'mousedown', 'mouseup', 'click'].forEach((type) => {
@@ -400,8 +429,8 @@
   async function goNextOrScroll() {
     const target = getJobScrollTarget();
     const oldMaxScrollTop = getMaxScrollTop(target);
-    const moved = await smoothScrollBy(target, Math.floor(getScrollViewportHeight(target) * 0.68));
-    await sleep(360);
+    const moved = await smoothScrollBy(target, Math.floor(getScrollViewportHeight(target) * 0.52), 960);
+    await sleep(randomBetween(420, 780));
     if (moved || getMaxScrollTop(target) > oldMaxScrollTop) return true;
 
     const next = findClickableByText(['下一页', '下页']);
@@ -422,6 +451,7 @@
     state.count = 0;
     updatePanel();
     log(state.settings.dryRun ? '开始试运行，不会真实点击投递按钮。' : '开始执行，请保持当前标签页打开。');
+    await requestWakeLock();
 
     try {
       let idleRounds = 0;
@@ -445,6 +475,7 @@
     } finally {
       state.running = false;
       state.stopped = true;
+      await releaseWakeLock();
       updatePanel();
       log(`结束，本轮命中 ${state.count} 个岗位。`);
     }
@@ -453,6 +484,7 @@
   function stop() {
     state.stopped = true;
     state.running = false;
+    releaseWakeLock();
     log('已停止。');
     updatePanel();
   }
@@ -594,13 +626,13 @@
         right: 16px;
         top: 92px;
         z-index: 2147483647;
-        width: 320px;
+        width: 342px;
         max-height: calc(100vh - 120px);
         overflow: auto;
-        color: #18212f;
+        color: #172033;
         background: #ffffff;
-        border: 1px solid #d8dee8;
-        box-shadow: 0 12px 36px rgba(15, 23, 42, .18);
+        border: 1px solid rgba(15, 23, 42, .12);
+        box-shadow: 0 18px 44px rgba(15, 23, 42, .2);
         border-radius: 8px;
         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
@@ -610,57 +642,99 @@
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        padding: 10px 12px;
-        border-bottom: 1px solid #eef1f5;
+        padding: 11px 12px;
+        border-bottom: 1px solid #e6ebf2;
+        background: #f8fafc;
         font-weight: 700;
         cursor: move;
         user-select: none;
         touch-action: none;
       }
+      .bah-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+      .bah-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #94a3b8;
+        box-shadow: 0 0 0 3px rgba(148, 163, 184, .16);
+      }
+      .bah-dot.is-running {
+        background: #00a389;
+        box-shadow: 0 0 0 3px rgba(0, 163, 137, .18);
+      }
       .bah-head button { cursor: pointer; }
-      .bah-body { display: grid; gap: 9px; padding: 12px; }
-      .bah-field { display: grid; gap: 4px; color: #526173; }
+      .bah-body { display: grid; gap: 10px; padding: 12px; }
+      .bah-field { display: grid; gap: 5px; color: #526173; }
+      .bah-field span { font-size: 12px; font-weight: 650; }
       .bah-field input,
       .bah-field textarea {
         width: 100%;
-        border: 1px solid #cfd7e3;
+        border: 1px solid #d5dde8;
         border-radius: 6px;
-        padding: 7px 8px;
+        padding: 8px 9px;
         font: inherit;
         color: #152033;
         background: #fff;
+        outline: none;
+        transition: border-color .16s ease, box-shadow .16s ease;
       }
-      .bah-field textarea { min-height: 64px; resize: vertical; }
+      .bah-field input:focus,
+      .bah-field textarea:focus {
+        border-color: #00a389;
+        box-shadow: 0 0 0 3px rgba(0, 163, 137, .14);
+      }
+      .bah-field textarea { min-height: 66px; resize: vertical; }
       .bah-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .bah-check { display: flex; align-items: center; gap: 7px; color: #314157; }
+      .bah-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 8px;
+        border: 1px solid #edf1f6;
+        border-radius: 6px;
+        background: #fbfcfe;
+        color: #314157;
+      }
+      .bah-check input { accent-color: #00a389; }
       .bah-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .bah-actions button,
       .bah-small {
-        border: 1px solid #b9c6d8;
+        border: 1px solid #c7d1df;
         border-radius: 6px;
-        padding: 7px 8px;
+        padding: 8px 9px;
         cursor: pointer;
         background: #f7f9fc;
         color: #172033;
         font: inherit;
+        transition: transform .12s ease, border-color .16s ease, background .16s ease;
       }
-      .bah-actions button:first-child {
+      .bah-actions button:hover,
+      .bah-small:hover {
+        border-color: #9fb0c5;
+        background: #eef3f8;
+      }
+      .bah-actions button:active,
+      .bah-small:active { transform: translateY(1px); }
+      .bah-actions button[data-action="start"] {
         border-color: #00a389;
         background: #00b899;
         color: #fff;
         font-weight: 700;
       }
+      .bah-actions button[data-action="start"]:hover { background: #00a389; }
       .bah-actions button:disabled { cursor: not-allowed; opacity: .55; }
       .bah-status {
-        padding: 8px;
+        padding: 9px 10px;
         border-radius: 6px;
-        background: #f3f6fa;
-        color: #334155;
+        background: #f3f7f7;
+        border: 1px solid #e1eeee;
+        color: #314157;
+        font-weight: 650;
       }
       .bah-log {
-        height: 150px;
+        height: 148px;
         overflow: auto;
-        padding: 8px;
+        padding: 9px;
         border: 1px solid #edf0f5;
         border-radius: 6px;
         background: #fbfcfe;
@@ -674,7 +748,7 @@
     panel.id = 'boss-apply-helper';
     panel.innerHTML = `
       <div class="bah-head">
-        <span>BOSS 投递助手</span>
+        <span class="bah-title"><span class="bah-dot" data-role="dot"></span><span>BOSS 自动投递</span></span>
         <button class="bah-small" data-action="collapse">收起</button>
       </div>
       <div class="bah-body"></div>
@@ -696,6 +770,8 @@
     body.appendChild(makeInput('招呼语', 'message', 'textarea'));
     body.appendChild(makeCheckbox('试运行：只记录命中，不真实点击', 'dryRun'));
     body.appendChild(makeCheckbox('自动确认发送/弹窗按钮', 'autoConfirmDialogs'));
+    body.appendChild(makeCheckbox('低干扰模式：减少页面回拉和强制滚动', 'lowInterference'));
+    body.appendChild(makeCheckbox('运行时保持屏幕常亮', 'keepAwake'));
 
     const actions = document.createElement('div');
     actions.className = 'bah-actions';
@@ -744,6 +820,7 @@
     const logBox = panel.querySelector('[data-role="log"]');
     const start = panel.querySelector('[data-action="start"]');
     const stopButton = panel.querySelector('[data-action="stop"]');
+    const dot = panel.querySelector('[data-role="dot"]');
 
     if (status) {
       status.textContent = `状态：${state.running ? '运行中' : '已停止'} | 本轮：${state.count}/${state.settings.maxPerRun} | 已记录：${state.seen.size}`;
@@ -753,6 +830,7 @@
     }
     if (start) start.disabled = state.running;
     if (stopButton) stopButton.disabled = !state.running;
+    if (dot) dot.classList.toggle('is-running', state.running);
   }
 
   if (document.readyState === 'loading') {
@@ -760,4 +838,10 @@
   } else {
     createPanel();
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && state.running && state.settings.keepAwake) {
+      requestWakeLock();
+    }
+  });
 })();
