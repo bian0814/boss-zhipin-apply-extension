@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "BOSS Zhipin Apply Helper",
+  "version": "0.1.2",
+  "description": "A semi-automatic, rate-limited apply/contact helper for BOSS Zhipin.",
+  "action": {
+    "default_title": "BOSS Zhipin Apply Helper"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.zhipin.com/*",
+        "https://*.zhipin.com/*",
+        "https://*.bosszhipin.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
